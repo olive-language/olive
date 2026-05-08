@@ -2,5 +2,20 @@
 name = "olive"
 version = "0.1.0"
 edition = "2024"
+authors = ["ecnivs"]
+description = "The Olive programming language compiler"
+license = "MIT"
+repository = "https://github.com/ecnivs/olive"
+keywords = ["compiler", "language", "olive"]
+categories = ["compilers"]
+
 
 [dependencies]
+ariadne = "0.6.0"
+clap = { version = "4.6.1", features = ["derive"] }
+cranelift = "0.131.1"
+cranelift-frontend = "0.131.1"
+cranelift-jit = "0.131.1"
+cranelift-module = "0.131.1"
+cranelift-native = "0.131.1"
+rustc-hash = "2.1.2"

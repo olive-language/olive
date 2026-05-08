@@ -1,7 +1,6 @@
 mod error;
-mod lexer;
+mod engine;
 mod token;
 
-pub use error::{LexError, LexResult};
-pub use lexer::Lexer;
+pub use engine::Lexer;
 pub use token::{Token, TokenKind};

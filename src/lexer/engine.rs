@@ -12,10 +12,11 @@ pub struct Lexer {
     pending: VecDeque<Token>,
     // tracks open delimiters for mismatch detection and layout suppression
     delimiter_stack: Vec<(char, usize, usize)>, // (open_char, line, col)
+    file_id: usize,
 }
 
 impl Lexer {
-    pub fn new(source: &str) -> Self {
+    pub fn new(source: &str, file_id: usize) -> Self {
         Self {
             source: source.chars().collect(),
             pos: 0,
@@ -24,6 +25,7 @@ impl Lexer {
             indent_stack: vec![0],
             pending: VecDeque::new(),
             delimiter_stack: Vec::new(),
+            file_id,
         }
     }
 
@@ -48,11 +50,11 @@ impl Lexer {
     }
 
     fn err(&self, msg: impl Into<String>) -> LexError {
-        LexError { message: msg.into(), line: self.line, col: self.col }
+        LexError { message: msg.into(), line: self.line, col: self.col, start: self.pos, end: self.pos + 1 }
     }
 
     fn make_tok(&self, kind: TokenKind, value: impl Into<String>, line: usize, col: usize, start: usize) -> Token {
-        Token { kind, value: value.into(), line, col, span: (start, self.pos) }
+        Token { kind, value: value.into(), line, col, span: (start, self.pos), file_id: self.file_id }
     }
 
     fn skip_inline_whitespace(&mut self) {
@@ -83,6 +85,8 @@ impl Lexer {
                 message: "mixed tabs and spaces in indentation".into(),
                 line: nl_line,
                 col: 1,
+                start: nl_pos,
+                end: self.pos,
             });
         }
 
@@ -103,6 +107,7 @@ impl Lexer {
                 value: String::new(),
                 line: nl_line, col: 1,
                 span: (nl_pos, self.pos),
+                file_id: self.file_id,
             });
         } else if depth < current {
             while *self.indent_stack.last().unwrap() > depth {
@@ -112,6 +117,7 @@ impl Lexer {
                     value: String::new(),
                     line: nl_line, col: 1,
                     span: (nl_pos, self.pos),
+                    file_id: self.file_id,
                 });
             }
             if *self.indent_stack.last().unwrap() != depth {
@@ -122,6 +128,8 @@ impl Lexer {
                     ),
                     line: nl_line,
                     col: 1,
+                    start: nl_pos,
+                    end: self.pos,
                 });
             }
         }
@@ -131,6 +139,7 @@ impl Lexer {
             value: "\n".into(),
             line: nl_line, col: 1,
             span: (nl_pos, nl_pos + 1),
+            file_id: self.file_id,
         }))
     }
 
@@ -147,11 +156,13 @@ impl Lexer {
                 None => return Err(LexError {
                     message: "unterminated string literal".into(),
                     line, col,
+                    start, end: self.pos,
                 }),
                 Some(c) if !triple && c == '\n' => return Err(LexError {
                     message: "newline inside single-quoted string; use triple quotes for multiline"
                         .into(),
                     line, col,
+                    start, end: self.pos,
                 }),
                 Some(c) if c == quote => {
                     if triple {
@@ -177,6 +188,7 @@ impl Lexer {
                     None       => return Err(LexError {
                         message: "unterminated escape sequence".into(),
                         line, col,
+                        start: self.pos - 1, end: self.pos,
                     }),
                 },
                 Some(c) => s.push(c),
@@ -186,6 +198,46 @@ impl Lexer {
     }
 
     fn read_number(&mut self, first: char, line: usize, col: usize, start: usize) -> LexResult<Token> {
+        // Base-prefixed integer literals: 0x, 0o, 0b
+        if first == '0' {
+            match self.peek() {
+                Some('x') | Some('X') => {
+                    self.advance();
+                    let mut num = String::from("0x");
+                    if !matches!(self.peek(), Some(c) if c.is_ascii_hexdigit()) {
+                        return Err(LexError { message: "invalid hexadecimal literal".into(), line, col, start, end: self.pos });
+                    }
+                    while matches!(self.peek(), Some(c) if c.is_ascii_hexdigit()) {
+                        num.push(self.advance().unwrap());
+                    }
+                    return Ok(self.make_tok(TokenKind::Integer, num, line, col, start));
+                }
+                Some('o') | Some('O') => {
+                    self.advance();
+                    let mut num = String::from("0o");
+                    if !matches!(self.peek(), Some(c) if matches!(c, '0'..='7')) {
+                        return Err(LexError { message: "invalid octal literal".into(), line, col, start, end: self.pos });
+                    }
+                    while matches!(self.peek(), Some(c) if matches!(c, '0'..='7')) {
+                        num.push(self.advance().unwrap());
+                    }
+                    return Ok(self.make_tok(TokenKind::Integer, num, line, col, start));
+                }
+                Some('b') | Some('B') => {
+                    self.advance();
+                    let mut num = String::from("0b");
+                    if !matches!(self.peek(), Some('0' | '1')) {
+                        return Err(LexError { message: "invalid binary literal".into(), line, col, start, end: self.pos });
+                    }
+                    while matches!(self.peek(), Some('0' | '1')) {
+                        num.push(self.advance().unwrap());
+                    }
+                    return Ok(self.make_tok(TokenKind::Integer, num, line, col, start));
+                }
+                _ => {} // fall through to decimal
+            }
+        }
+
         let mut num = String::from(first);
         let mut is_float = false;
 
@@ -213,6 +265,7 @@ impl Lexer {
                 return Err(LexError {
                     message: format!("invalid scientific notation: '{}'", num),
                     line, col,
+                    start, end: self.pos,
                 });
             }
             while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
@@ -246,10 +299,20 @@ impl Lexer {
             "not"    => TokenKind::Not,
             "and"    => TokenKind::And,
             "or"     => TokenKind::Or,
-            "pass"   => TokenKind::Pass,
+            "pass"     => TokenKind::Pass,
+            "break"    => TokenKind::Break,
+            "continue" => TokenKind::Continue,
+            "try"      => TokenKind::Try,
+            "except"   => TokenKind::Except,
+            "finally"  => TokenKind::Finally,
+            "raise"    => TokenKind::Raise,
+            "as"       => TokenKind::As,
+            "assert"   => TokenKind::Assert,
             "import" => TokenKind::Import,
             "from"   => TokenKind::From,
             "class"  => TokenKind::Class,
+            "is"     => TokenKind::Is,
+            "mut"    => TokenKind::Mut,
             _        => TokenKind::Identifier,
         };
         self.make_tok(kind, ident, line, col, start)
@@ -277,9 +340,10 @@ impl Lexer {
                                 open, dl, dc
                             ),
                             line, col,
+                            start: self.pos, end: self.pos + 1,
                         });
                     }
-                    // Synthesize: Newline, Dedent×n, EOF at end of indented source.
+                    // Synthesize: Newline, Dedent×n, Eof at end of indented source.
                     if self.indent_stack.len() > 1 {
                         let n = self.indent_stack.len() - 1;
                         self.indent_stack.truncate(1);
@@ -288,23 +352,27 @@ impl Lexer {
                                 kind: TokenKind::Dedent,
                                 value: String::new(),
                                 line, col, span: (start, start),
+                                file_id: self.file_id,
                             });
                         }
                         self.pending.push_back(Token {
-                            kind: TokenKind::EOF,
+                            kind: TokenKind::Eof,
                             value: String::new(),
                             line, col, span: (start, start),
+                            file_id: self.file_id,
                         });
                         return Ok(Token {
                             kind: TokenKind::Newline,
                             value: "\n".into(),
                             line, col, span: (start, start),
+                            file_id: self.file_id,
                         });
                     }
                     return Ok(Token {
-                        kind: TokenKind::EOF,
+                        kind: TokenKind::Eof,
                         value: String::new(),
                         line, col, span: (start, start),
+                        file_id: self.file_id,
                     });
                 }
                 Some(c) => c,
@@ -418,7 +486,12 @@ impl Lexer {
                 '*' => {
                     if self.peek() == Some('*') {
                         self.advance();
-                        self.make_tok(TokenKind::DoubleStar, "**", line, col, start)
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            self.make_tok(TokenKind::DoubleStarEqual, "**=", line, col, start)
+                        } else {
+                            self.make_tok(TokenKind::DoubleStar, "**", line, col, start)
+                        }
                     } else if self.peek() == Some('=') {
                         self.advance();
                         self.make_tok(TokenKind::StarEqual, "*=", line, col, start)
@@ -429,7 +502,12 @@ impl Lexer {
                 '/' => {
                     if self.peek() == Some('/') {
                         self.advance();
-                        self.make_tok(TokenKind::DoubleSlash, "//", line, col, start)
+                        if self.peek() == Some('=') {
+                            self.advance();
+                            self.make_tok(TokenKind::DoubleSlashEqual, "//=", line, col, start)
+                        } else {
+                            self.make_tok(TokenKind::DoubleSlash, "//", line, col, start)
+                        }
                     } else if self.peek() == Some('=') {
                         self.advance();
                         self.make_tok(TokenKind::SlashEqual, "/=", line, col, start)
@@ -437,7 +515,14 @@ impl Lexer {
                         self.make_tok(TokenKind::Slash, "/", line, col, start)
                     }
                 }
-                '%' => self.make_tok(TokenKind::Percent, "%", line, col, start),
+                '%' => {
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        self.make_tok(TokenKind::PercentEqual, "%=", line, col, start)
+                    } else {
+                        self.make_tok(TokenKind::Percent, "%", line, col, start)
+                    }
+                }
 
                 '(' => {
                     self.delimiter_stack.push(('(', line, col));
@@ -453,6 +538,7 @@ impl Lexer {
                                 open, dl, dc
                             ),
                             line, col,
+                            start: self.pos - 1, end: self.pos,
                         }),
                     }
                     self.make_tok(TokenKind::RParen, ")", line, col, start)
@@ -471,6 +557,7 @@ impl Lexer {
                                 open, dl, dc
                             ),
                             line, col,
+                            start: self.pos - 1, end: self.pos,
                         }),
                     }
                     self.make_tok(TokenKind::RBracket, "]", line, col, start)
@@ -489,6 +576,7 @@ impl Lexer {
                                 open, dl, dc
                             ),
                             line, col,
+                            start: self.pos - 1, end: self.pos,
                         }),
                     }
                     self.make_tok(TokenKind::RBrace, "}", line, col, start)
@@ -497,6 +585,7 @@ impl Lexer {
                 ',' => self.make_tok(TokenKind::Comma,     ",", line, col, start),
                 '.' => self.make_tok(TokenKind::Dot,       ".", line, col, start),
                 ';' => self.make_tok(TokenKind::Semicolon, ";", line, col, start),
+                '&' => self.make_tok(TokenKind::Ampersand, "&", line, col, start),
 
                 other => return Err(self.err(format!("unexpected character {:?}", other))),
             };
@@ -509,7 +598,7 @@ impl Lexer {
         let mut tokens = Vec::new();
         loop {
             let tok = self.next_token()?;
-            let is_eof = tok.kind == TokenKind::EOF;
+            let is_eof = tok.kind == TokenKind::Eof;
             tokens.push(tok);
             if is_eof { break; }
         }

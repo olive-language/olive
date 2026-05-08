@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-pub struct LexError {
+pub struct ParseError {
     pub message: String,
     pub line: usize,
     pub col: usize,
@@ -7,12 +7,12 @@ pub struct LexError {
     pub end: usize,
 }
 
-impl std::fmt::Display for LexError {
+impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}: {}", self.line, self.col, self.message)
     }
 }
 
-impl std::error::Error for LexError {}
+impl std::error::Error for ParseError {}
 
-pub type LexResult<T> = Result<T, LexError>;
+pub type ParseResult<T> = Result<T, ParseError>;

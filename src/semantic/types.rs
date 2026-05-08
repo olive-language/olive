@@ -1,0 +1,108 @@
+use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static TYPE_VAR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub enum Type {
+    Int,
+    Float,
+    Str,
+    Bool,
+    Null,
+    // Named user-defined type (class)
+    Class(String),
+    // Function type: (params) -> return_type
+    Fn(Vec<Type>, Box<Type>),
+    // Tuple type: (T1, T2, ...)
+    Tuple(Vec<Type>),
+    // List type: [T]
+    List(Box<Type>),
+    // Dict type: {K: V}
+    Dict(Box<Type>, Box<Type>),
+    // Set type: {T}
+    Set(Box<Type>),
+    // Reference type: &T
+    Ref(Box<Type>),
+    // Mutable reference type: &mut T
+    MutRef(Box<Type>),
+    // Type variable for inference
+    Var(usize),
+    // "Any" type for dynamic fallback
+    Any,
+    // "Never" type for unreachable paths
+    Never,
+    // Void return type (no value)
+    Void,
+}
+
+impl Type {
+    // Allocate a globally unique type variable ID.
+    pub fn new_var() -> Self {
+        let id = TYPE_VAR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        Type::Var(id)
+    }
+
+    /// Returns true if this is an unresolved type variable.
+    #[allow(dead_code)]
+    pub fn is_var(&self) -> bool {
+        matches!(self, Type::Var(_))
+    }
+
+    /// Returns true if this is a numeric type (Int or Float).
+    #[allow(dead_code)]
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Int | Type::Float)
+    }
+
+    /// Returns true if this type has move semantics (heap allocated or complex).
+    pub fn is_move_type(&self) -> bool {
+        match self {
+            Type::Int | Type::Float | Type::Bool | Type::Null | Type::Void | Type::Never => false,
+            Type::Ref(_) | Type::MutRef(_) => false, // References are Copy
+            _ => true,
+        }
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Int => write!(f, "int"),
+            Type::Float => write!(f, "float"),
+            Type::Str => write!(f, "str"),
+            Type::Bool => write!(f, "bool"),
+            Type::Null => write!(f, "null"),
+            Type::Void => write!(f, "void"),
+            Type::Class(name) => write!(f, "{}", name),
+            Type::Fn(params, ret) => {
+                write!(f, "(")?;
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", p)?;
+                }
+                write!(f, ") -> {}", ret)
+            }
+            Type::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", e)?;
+                }
+                if elems.len() == 1 {
+                    write!(f, ",")?;
+                }
+                write!(f, ")")
+            }
+            Type::List(t) => write!(f, "[{}]", t),
+            Type::Dict(k, v) => write!(f, "{{{}: {}}}", k, v),
+            Type::Set(t) => write!(f, "{{{}}}", t),
+            Type::Ref(t) => write!(f, "&{}", t),
+            Type::MutRef(t) => write!(f, "&mut {}", t),
+            Type::Var(id) => write!(f, "?T{}", id),
+            Type::Any => write!(f, "Any"),
+            Type::Never => write!(f, "Never"),
+        }
+    }
+}

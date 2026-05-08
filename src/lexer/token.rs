@@ -19,12 +19,22 @@ pub enum TokenKind {
     False,
     Null,
     Not,
+    Is,
     And,
     Or,
     Pass,
+    Break,
+    Continue,
     Import,
     From,
     Class,
+    Try,
+    Except,
+    Finally,
+    Raise,
+    As,
+    Assert,
+    Mut,
 
     // operators
     Plus,
@@ -46,6 +56,10 @@ pub enum TokenKind {
     MinusEqual,
     StarEqual,
     SlashEqual,
+    DoubleSlashEqual,
+    PercentEqual,
+    DoubleStarEqual,
+    Ampersand,
 
     // symbols
     LParen,
@@ -66,7 +80,7 @@ pub enum TokenKind {
     Dedent,
 
     // end
-    EOF,
+    Eof,
 }
 
 #[derive(Debug, Clone)]
@@ -76,4 +90,5 @@ pub struct Token {
     pub line: usize,
     pub col: usize,
     pub span: (usize, usize), // char offsets [start, end)
+    pub file_id: usize,
 }
